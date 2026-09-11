@@ -1,0 +1,5 @@
+# ─── Local overrides — DO NOT COMMIT ─────────────────────────────────
+# Copy to terraform.tfvars and fill in. This file is gitignored.
+
+db_password  = "ChangeMe123!ChangeMe123!"
+ssh_key_name = "myshoe"

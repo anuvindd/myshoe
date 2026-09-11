@@ -1,0 +1,54 @@
+name: CD
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-push-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      AWS_REGION: ap-south-1
+      ECR_REGISTRY: 470999030662.dkr.ecr.ap-south-1.amazonaws.com
+      ECR_REPOSITORY: myshoe-app
+      IMAGE_TAG: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -t $ECR_REGISTRY/$ECR_REPOSITORY:latest -f docker/Dockerfile docker/app
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig --name myshoe --region $AWS_REGION || echo "Self-managed K8s: skipping eks update-kubeconfig"
+          # For self-managed cluster, set KUBECONFIG secret instead
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBECONFIG }}" | base64 -d > ~/.kube/config || true
+
+      - name: Deploy to Kubernetes
+        run: |
+          kubectl apply -f kubernetes/configmap-secret.yaml
+          kubectl set image deployment/myshoe-app app=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG --record || kubectl apply -f kubernetes/app.yaml
+          kubectl rollout status deployment/myshoe-app --timeout=180s
+
+      - name: Verify
+        run: |
+          kubectl get pods -l app=myshoe
+          kubectl get svc myshoe-service

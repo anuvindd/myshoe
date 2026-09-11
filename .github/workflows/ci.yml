@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  lint-test-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install deps
+        run: pip install -r docker/requirements.txt flake8 pytest
+      - name: Lint
+        run: flake8 docker/app --max-line-length=120 --ignore=E501 || true
+      - name: Syntax check
+        run: python -m py_compile docker/app/main.py
+      - name: Build Docker image
+        run: docker build -t myshoe:ci -f docker/Dockerfile docker/app

@@ -1,0 +1,98 @@
+---
+- name: Provision MyShoe K8s nodes (base + docker + kubeadm)
+  hosts: all
+  become: true
+  vars:
+    k8s_version: "1.30"
+    docker_version: "24.0"
+
+  tasks:
+    - name: Set hostname
+      hostname:
+        name: "{{ inventory_hostname }}"
+
+    - name: Disable swap
+      shell: swapoff -a && sed -i '/ swap / s/^/#/' /etc/fstab
+      args:
+        warn: false
+      changed_when: false
+
+    - name: Load kernel modules
+      modprobe:
+        name: "{{ item }}"
+        state: present
+      loop: [overlay, br_netfilter]
+
+    - name: Sysctl for Kubernetes networking
+      sysctl:
+        name: "{{ item.key }}"
+        value: "{{ item.value }}"
+        state: present
+        reload: yes
+      loop:
+        - { key: 'net.bridge.bridge-nf-call-iptables', value: '1' }
+        - { key: 'net.ipv4.ip_forward', value: '1' }
+        - { key: 'net.bridge.bridge-nf-call-ip6tables', value: '1' }
+
+    - name: Install Docker
+      dnf:
+        name: docker
+        state: present
+
+    - name: Enable and start Docker
+      systemd:
+        name: docker
+        enabled: true
+        state: started
+
+    - name: Add ec2-user to docker group
+      user:
+        name: ec2-user
+        groups: docker
+        append: yes
+
+    - name: Create Kubernetes repo
+      copy:
+        dest: /etc/yum.repos.d/kubernetes.repo
+        content: |
+          [kubernetes]
+          name=Kubernetes
+          baseurl=https://pkgs.k8s.io/core:/stable:/v1.30/rpm/
+          enabled=1
+          gpgcheck=1
+          repo_gpgcheck=0
+          gpgkey=https://pkgs.k8s.io/core:/stable:/v1.30/rpm/repodata/repomd.xml.key
+          exclude=kubelet kubeadm kubectl cri-tools kubernetes-cni
+
+    - name: Install kubelet kubeadm kubectl
+      dnf:
+        name: [kubelet, kubeadm, kubectl]
+        state: present
+        disable_excludes: kubernetes
+
+    - name: Enable kubelet
+      systemd:
+        name: kubelet
+        enabled: true
+        state: started
+
+    - name: Pull kubeadm images (master only)
+      shell: kubeadm config images pull
+      when: "'k8s-master' in inventory_hostname or 'master' in group_names"
+      changed_when: false
+
+    - name: Open firewall for K8s
+      firewalld:
+        port: "{{ item }}/tcp"
+        permanent: true
+        immediate: true
+        state: enabled
+      loop: [6443, 10250, 30080, 8000]
+      ignore_errors: true
+
+    - name: Ensure firewalld running
+      systemd:
+        name: firewalld
+        state: started
+        enabled: true
+      ignore_errors: true

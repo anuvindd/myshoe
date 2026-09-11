@@ -99,11 +99,12 @@ resource "aws_security_group" "alb" {
 }
 
 # ─── EC2 Master Node ───────────────────────────────────────────────────
+# Placed in PUBLIC subnet so SSH via EIP/IGW works (private subnets have only NAT)
 
 resource "aws_instance" "k8s_master" {
   ami                    = data.aws_ami.amazon_linux.id
   instance_type          = var.instance_type
-  subnet_id              = aws_subnet.private.id
+  subnet_id              = aws_subnet.public.id
   vpc_security_group_ids = [aws_security_group.k8s_nodes.id]
   iam_instance_profile   = aws_iam_instance_profile.ec2.name
 
@@ -173,12 +174,13 @@ resource "aws_instance" "k8s_master" {
 }
 
 # ─── EC2 Worker Nodes (count = 2) ─────────────────────────────────────
+# Spread across both public AZs for HA and ALB health checks
 
 resource "aws_instance" "k8s_worker" {
   count                  = 2
   ami                    = data.aws_ami.amazon_linux.id
   instance_type          = var.instance_type
-  subnet_id              = aws_subnet.private.id
+  subnet_id              = element([aws_subnet.public.id, aws_subnet.public_b.id], count.index)
   vpc_security_group_ids = [aws_security_group.k8s_nodes.id]
   iam_instance_profile   = aws_iam_instance_profile.ec2.name
 
